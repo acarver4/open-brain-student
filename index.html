@@ -584,17 +584,49 @@ async function loadYouTube() {
   }
 }
 
-// Copied YouTube transcripts come with timestamp lines ("1:23" or "2 minutes, 5 seconds").
+// Copied YouTube transcripts mix timestamps into the text. The newer format glues
+// "0:02" + "2 seconds" onto the front of each line ("0:022 secondsfather help me").
+// For each timestamp we work out exactly what YouTube's spoken version would be
+// and remove both, so real numbers in the sermon (like "John 3:16") are left alone.
+function spokenTime(h, m, s) {
+  const parts = [];
+  if (h) parts.push(h + (h === 1 ? ' hour' : ' hours'));
+  if (m) parts.push(m + (m === 1 ? ' minute' : ' minutes'));
+  if (s || !parts.length) parts.push(s + (s === 1 ? ' second' : ' seconds'));
+  return parts.join(', ');
+}
+
 function cleanTranscript(text) {
-  return text
-    .split('\n')
-    .map(l => l.trim())
+  // Put each "Chapter N: title" on its own line, ending the title where the next timestamp starts
+  text = text.replace(/\s*(Chapter \d+:[^\n]*?)\s*(?=\d{1,2}:\d{2}(?::\d{2})?\s*\d+\s+(?:hours?|minutes?|seconds?))/g, '\n$1\n');
+
+  const re = /(\d{1,2}):(\d{2})(?::(\d{2}))?/g;
+  let out = '', last = 0, m;
+  while ((m = re.exec(text))) {
+    const h = m[3] ? +m[1] : 0, min = m[3] ? +m[2] : +m[1], sec = m[3] ? +m[3] : +m[2];
+    const spoken = spokenTime(h, min, sec);
+    const rest = text.slice(re.lastIndex);
+    const gap = rest.match(/^\s*/)[0];
+    if (rest.slice(gap.length, gap.length + spoken.length).toLowerCase() === spoken.toLowerCase()) {
+      out += text.slice(last, m.index) + ' ';
+      last = re.lastIndex + gap.length + spoken.length;
+      re.lastIndex = last;
+    }
+  }
+  out += text.slice(last);
+
+  const lines = out.split('\n')
+    .map(l => l.replace(/[ \t]+/g, ' ').trim())
     .filter(l => l &&
-      !/^\d{1,2}:\d{2}(:\d{2})?$/.test(l) &&
-      !/^(\d+\s+(hours?|minutes?|seconds?),?\s*)+$/i.test(l))
-    .join(' ')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
+      !/^\d{1,2}(:\d{2}){1,2}$/.test(l) &&
+      !/^(\d+\s+(hours?|minutes?|seconds?),?\s*)+$/i.test(l));
+
+  let result = '';
+  for (const l of lines) {
+    if (/^Chapter \d+:/.test(l)) result += (result ? '\n\n' : '') + l + '\n';
+    else result += (result && !result.endsWith('\n') ? ' ' : '') + l;
+  }
+  return result.trim();
 }
 
 $('ytLoad').onclick = loadYouTube;
